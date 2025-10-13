@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Data and outputs
+*.mp4
+*.mov
+*.avi
+ManualEditado/
+InstaManual/
+*.DS_Store
+
+# Environment variables
+.env

@@ -1,0 +1,4 @@
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+pydub==0.25.1
+imageio-ffmpeg==0.5.1

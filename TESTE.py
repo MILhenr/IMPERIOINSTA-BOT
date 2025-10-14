@@ -1,102 +1,82 @@
+import os
 import cv2
 import numpy as np
-import os
-import imageio_ffmpeg
-import subprocess
-from pydub.generators import Sine
-from pydub import AudioSegment
+from scipy.io.wavfile import write as write_wav
+from scipy.io import wavfile
 
+def gerar_ding_audio(duration=0.3, freq=440, fs=44100):
+    """
+    Gera um som 'ding' simples e retorna como array numpy
+    """
+    t = np.linspace(0, duration, int(fs*duration), endpoint=False)
+    wave = 0.1 * np.sin(2*np.pi*freq*t) * np.exp(-15*t)
+    wave = np.clip(wave, -1, 1)
+    wave_int16 = np.int16(wave * 32767)
+    return wave_int16, 
 
-def gerar_ding_audio(output_path="ding.wav", duration=0.3, freq=440):
-    """Gera um som 'ding' e salva como WAV."""
-    ding = Sine(freq).to_audio_segment(duration=duration * 1000).apply_gain(-12)
-    ding.export(output_path, format="wav")
-    return output_path
+def salvar_audio_ding(path='ding.wav'):
+    ding_wave, fs = gerar_ding_audio()
+    write_wav(path, fs, ding_wave)
+    return path
 
-
-def combinar_audios(audio_path1, audio_path2, output_path="audio_final.wav"):
-    """Combina dois áudios (original + ding)."""
-    audio1 = AudioSegment.from_file(audio_path1)
-    audio2 = AudioSegment.from_file(audio_path2)
-    audio2 = audio2.overlay(audio1)
-    audio2.export(output_path, format="wav")
-    return output_path
-
-
-def processar_video(input_path, output_path):
+def processar_video_cv2(input_path, output_path):
+    """
+    Processa vídeo usando OpenCV: redimensiona, centraliza e sobrepõe camada transparente
+    """
     fundo_path = os.path.expanduser("~/Desktop/InstaManual/EXEMPLOM4.MOV")
-    temp_sem_audio = "temp_sem_audio.mp4"
-    temp_audio_original = "temp_audio_original.wav"
-    temp_ding = gerar_ding_audio()
-    temp_audio_final = "temp_audio_final.wav"
-
-    # Extrair áudio original do vídeo
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", "pcm_s16le", temp_audio_original],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-
-    # Combinar áudios
-    combinar_audios(temp_audio_original, temp_ding, temp_audio_final)
-
-    # Abrir fundo e vídeo principal
     cap_fundo = cv2.VideoCapture(fundo_path)
     cap_video = cv2.VideoCapture(input_path)
 
+    if not cap_fundo.isOpened() or not cap_video.isOpened():
+        print("Erro ao abrir vídeos")
+        return
+
+    # Obter propriedades do vídeo
     fps = int(cap_video.get(cv2.CAP_PROP_FPS))
-    fundo_width = int(cap_fundo.get(cv2.CAP_PROP_FRAME_WIDTH))
-    fundo_height = int(cap_fundo.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(cap_fundo.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap_fundo.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Criar VideoWriter para salvar
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    # Criar escritor
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(temp_sem_audio, fourcc, fps, (fundo_width, fundo_height))
-
-    altura_resize = int(fundo_height * 0.45)
-    posicao_y = 1220
-
+    # Processar frame a frame
     while True:
-        ret_f, frame_fundo = cap_fundo.read()
-        ret_v, frame_video = cap_video.read()
+        ret_fundo, frame_fundo = cap_fundo.read()
+        ret_video, frame_video = cap_video.read()
 
-        if not ret_f or not ret_v:
+        if not ret_fundo or not ret_video:
             break
 
-        # Crop quadrado do vídeo original
-        h, w, _ = frame_video.shape
-        lado = min(w, h)
-        x0 = (w - lado) // 2
-        y0 = (h - lado) // 2
-        frame_video = frame_video[y0:y0 + lado, x0:x0 + lado]
+        # Redimensionar vídeo para caber no fundo
+        h_resize = int(height * 0.45)
+        scale_ratio = h_resize / frame_video.shape[0]
+        w_resize = int(frame_video.shape[1] * scale_ratio)
+        frame_video_resized = cv2.resize(frame_video, (w_resize, h_resize))
 
-        # Redimensionar o vídeo recortado
-        frame_video = cv2.resize(frame_video, (altura_resize, altura_resize))
+        # Posicionar no centro horizontalmente e posicao_y vertical
+        pos_y = 1220
+        pos_x = (width - w_resize) // 2
 
-        # Inserir no fundo
-        x = (fundo_width - altura_resize) // 2
-        y = min(posicao_y, fundo_height - altura_resize)
-        frame_fundo[y:y + altura_resize, x:x + altura_resize] = frame_video
-
-        # Camada transparente
+        # Sobreposição simples
         overlay = frame_fundo.copy()
-        cv2.rectangle(overlay, (x, y), (x + altura_resize, y + altura_resize), (0, 0, 0), -1)
-        frame_final = cv2.addWeighted(overlay, 0.02, frame_fundo, 0.98, 0)
+        overlay[pos_y:pos_y+h_resize, pos_x:pos_x+w_resize] = frame_video_resized
+
+        # Camada transparente leve
+        alpha = 0.02
+        frame_final = cv2.addWeighted(overlay, alpha, frame_fundo, 1-alpha, 0)
 
         out.write(frame_final)
 
     cap_fundo.release()
     cap_video.release()
     out.release()
+    cv2.destroyAllWindows()
+    print("Vídeo processado com sucesso!")
 
-    # Combinar o vídeo final com o áudio final
-    subprocess.run([
-        "ffmpeg", "-y", "-i", temp_sem_audio, "-i", temp_audio_final,
-        "-c:v", "libx264", "-c:a", "aac", "-b:a", "192k", "-shortest", output_path
-    ])
-
-    # Limpeza
-    for f in [temp_sem_audio, temp_audio_original, temp_ding, temp_audio_final]:
-        if os.path.exists(f):
-            os.remove(f)
-
-    print(f"✅ Vídeo processado salvo em: {output_path}")
+# Exemplo de uso
+if __name__ == "__main__":
+    input_vid = 'entrada.mp4'
+    output_vid = 'saida.mp4'
+    salvar_audio_ding()  # salva arquivo ding.wav
+    processar_video_cv2(input_vid, output_vid)
